@@ -1,0 +1,88 @@
+groups:
+  - name: zkintents_critical
+    interval: 30s
+    rules:
+      # Service down
+      - alert: SequencerDown
+        expr: up{job="sequencer"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: sequencer
+        annotations:
+          summary: 'Sequencer is down'
+          description: 'Sequencer has been down for more than 2 minutes. All users affected.'
+          runbook: 'https://github.com/zkintents/runbooks/blob/main/incident-response.md#sequencer-down'
+
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'High error rate detected'
+          description: 'Error rate is {{ $value | humanizePercentage }} (threshold: 1%)'
+          runbook: 'https://github.com/zkintents/runbooks/blob/main/incident-response.md#high-error-rate'
+
+      # Database connection pool exhausted
+      - alert: DatabaseConnectionPoolExhausted
+        expr: database_connection_pool_active / database_connection_pool_max > 0.95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Database connection pool nearly exhausted'
+          description: 'Connection pool usage is {{ $value | humanizePercentage }}'
+          runbook: 'https://github.com/zkintents/runbooks/blob/main/incident-response.md#database-slow-queries'
+
+      # Intent processing delayed
+      - alert: IntentProcessingDelayed
+        expr: intent_queue_size > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Intent queue is growing'
+          description: '{{ $value }} intents in queue (threshold: 1000)'
+
+      # Proof generation slow
+      - alert: ProofGenerationSlow
+        expr: histogram_quantile(0.95, rate(proof_generation_duration_seconds_bucket[5m])) > 120
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Proof generation is slow'
+          description: 'P95 proof generation time is {{ $value }}s (threshold: 120s)'
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 / 1024 > 1.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'High memory usage detected'
+          description: 'Memory usage is {{ $value }}GB (threshold: 1.8GB)'
+          runbook: 'https://github.com/zkintents/runbooks/blob/main/incident-response.md#out-of-memory'
+
+      # Certificate expiring soon
+      - alert: SSLCertificateExpiringSoon
+        expr: (ssl_certificate_expiry_seconds - time()) / 86400 < 14
+        labels:
+          severity: warning
+        annotations:
+          summary: 'SSL certificate expiring soon'
+          description: 'Certificate for {{ $labels.domain }} expires in {{ $value }} days'
+
+      # DDoS detected
+      - alert: DDoSPossible
+        expr: rate(http_requests_total[1m]) > 10000
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Possible DDoS attack'
+          description: 'Request rate is {{ $value }} req/s (normal: <1000 req/s)'
+          runbook: 'https://github.com/zkintents/runbooks/blob/main/incident-response.md#ddos-attack'

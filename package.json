@@ -1,0 +1,51 @@
+{
+  "name": "zk-intents-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-grade zk-rollup on Polygon with intent-first UX and partial privacy",
+  "workspaces": [
+    "circuits",
+    "contracts",
+    "sequencer",
+    "prover",
+    "sdk",
+    "ui"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint --workspaces",
+    "clean": "npm run clean --workspaces && rm -rf node_modules",
+    "circuits:build": "npm run build --workspace=circuits",
+    "contracts:build": "npm run build --workspace=contracts",
+    "contracts:test": "npm run test --workspace=contracts",
+    "sequencer:dev": "npm run dev --workspace=sequencer",
+    "prover:dev": "npm run dev --workspace=prover",
+    "sdk:build": "npm run build --workspace=sdk",
+    "ui:dev": "npm run dev --workspace=ui"
+  },
+  "devDependencies": {
+    "@prisma/client": "^6.19.0",
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.18.0",
+    "@typescript-eslint/parser": "^6.18.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.1.1",
+    "prisma": "^6.19.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "@scure/bip32": "^2.0.1",
+    "@types/bcrypt": "^6.0.0",
+    "@types/nodemailer": "^7.0.4",
+    "bcrypt": "^6.0.0",
+    "bip39": "^3.1.0",
+    "ethers": "^6.15.0",
+    "nodemailer": "^7.0.11"
+  }
+}

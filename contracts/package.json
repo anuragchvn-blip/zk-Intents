@@ -1,0 +1,15 @@
+{
+  "name": "@zk-intents/contracts",
+  "version": "0.1.0",
+  "description": "Smart contracts for zk-Intents rollup on Polygon (Remix IDE)",
+  "scripts": {
+    "lint": "solhint '*.sol'"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.1",
+    "@openzeppelin/contracts-upgradeable": "^5.0.1"
+  },
+  "devDependencies": {
+    "solhint": "^4.1.1"
+  }
+}
