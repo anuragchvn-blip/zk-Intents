@@ -421,4 +421,7 @@ export class ZkClient {
   }
 }
 
-export const api = new ZkClient();
+// Import config to get production sequencer URL
+import { SEQUENCER_URL } from './config';
+
+export const api = new ZkClient(SEQUENCER_URL);
