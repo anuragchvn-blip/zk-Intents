@@ -373,7 +373,7 @@ export class AuthService {
 
     // Verify passkey credential exists
     const passkey = user.passkeyCredentials.find(
-      (pk) => pk.credentialId === credentialId
+      (pk: any) => pk.credentialId === credentialId
     );
 
     if (!passkey) {
