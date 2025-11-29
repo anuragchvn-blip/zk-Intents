@@ -1,0 +1,140 @@
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User accounts with email authentication
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  emailVerified     Boolean   @default(false)
+  encryptedSeed     String    // AES-256 encrypted BIP39 seed phrase
+  seedSalt          String    // Salt for seed encryption
+  seedIv            String    // IV for seed encryption
+  passwordHash      String    // Bcrypt hash
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  // Relations
+  accounts          Account[]
+  sessions          Session[]
+  recoveryCodes     RecoveryCode[]
+  passkeyCredentials PasskeyCredential[]
+  
+  @@index([email])
+}
+
+// On-chain accounts derived from seed
+model Account {
+  id                String   @id @default(uuid())
+  userId            String
+  address           String   @unique
+  publicKeyX        String   // EdDSA public key X coordinate
+  publicKeyY        String   // EdDSA public key Y coordinate
+  derivationPath    String   // BIP74 path (e.g. "m/44'/60'/0'/0/0")
+  chainId           Int
+  chainName         String
+  balances          Balance[]
+  nonce             Int      @default(0)
+  createdAt         DateTime @default(now())
+  
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([address])
+  @@index([chainId])
+}
+
+// Token balances for each account
+model Balance {
+  id                String   @id @default(uuid())
+  accountId         String
+  tokenSymbol       String
+  tokenAddress      String
+  amount            String   // Stored as string to handle big numbers
+  amountCommitment  String   // Encrypted balance for privacy
+  decimals          Int
+  updatedAt         DateTime @updatedAt
+  
+  account           Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  
+  @@unique([accountId, tokenSymbol, tokenAddress])
+  @@index([accountId])
+}
+
+// Active sessions with passkey authentication
+model Session {
+  id             String   @id @default(uuid())
+  userId         String
+  sessionToken   String   @unique
+  expiresAt      DateTime
+  lastActiveAt   DateTime @default(now())
+  createdAt      DateTime @default(now())
+  
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([sessionToken])
+}
+
+// WebAuthn passkey credentials
+model PasskeyCredential {
+  id              String   @id @default(uuid())
+  userId          String
+  credentialId    String   @unique
+  publicKey       String   // Stored as base64
+  counter         Int      @default(0)
+  deviceName      String?
+  createdAt       DateTime @default(now())
+  lastUsedAt      DateTime @default(now())
+  
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([credentialId])
+}
+
+// Email OTP codes for recovery
+model RecoveryCode {
+  id          String   @id @default(uuid())
+  userId      String
+  type        String   // "email_otp" or "backup_code"
+  code        String
+  used        Boolean  @default(false)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([code])
+}
+
+// Intent transaction history
+model Intent {
+  id                String   @id @default(uuid())
+  intentId          String   @unique // On-chain intent ID
+  senderAddress     String
+  action            String   // transfer, swap, stake, etc.
+  tokenSymbol       String
+  amount            String
+  recipient         String
+  chainId           Int
+  status            String   // queued, processing, completed, failed
+  txHash            String?  // L1 transaction hash after settlement
+  proofGenerated    Boolean  @default(false)
+  batchId           String?
+  createdAt         DateTime @default(now())
+  settledAt         DateTime?
+  
+  @@index([senderAddress])
+  @@index([status])
+  @@index([intentId])
+}
