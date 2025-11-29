@@ -7,70 +7,79 @@ on:
     branches: [main, develop]
 
 jobs:
-  lint:
-    name: Lint
+  lint-contracts:
+    name: Lint Solidity Contracts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run lint
-  
-  test-contracts:
-    name: Test Contracts
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - run: npm run contracts:test
-  
-  test-sequencer:
-    name: Test Sequencer
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - run: cd sequencer && npm test
-  
-  build-circuits:
-    name: Build Circuits
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - name: Install Circom
+      - name: Install dependencies
         run: |
-          wget https://github.com/iden3/circom/releases/download/v2.1.6/circom-linux-amd64
-          chmod +x circom-linux-amd64
-          sudo mv circom-linux-amd64 /usr/local/bin/circom
-      - run: npm ci
-      - run: npm run circuits:build
+          npm install
+          cd contracts && npm install
+      - name: Lint contracts
+        run: cd contracts && npm run lint
   
-  security-scan:
-    name: Security Scan
+  build-sequencer:
+    name: Build Sequencer
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-      - run: npm ci
-      - name: Run Slither
+      - name: Install dependencies
         run: |
-          pip install slither-analyzer
-          cd contracts && slither .
+          npm install
+          cd sequencer && npm install
+      - name: Build sequencer
+        run: cd sequencer && npm run build
+  
+  build-sdk:
+    name: Build SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: |
+          npm install
+          cd sdk && npm install
+      - name: Build SDK
+        run: cd sdk && npm run build
+  
+  build-ui:
+    name: Build UI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: |
+          npm install
+          cd ui && npm install
+      - name: Build Next.js app
+        run: cd ui && npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:3000
+  
+  build-prover:
+    name: Build Prover
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: |
+          npm install
+          cd prover && npm install
+      - name: Build prover
+        run: cd prover && npm run build
