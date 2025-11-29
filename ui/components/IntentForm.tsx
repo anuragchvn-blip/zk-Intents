@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Send, Loader2, ChevronDown } from 'lucide-react';
-import { SUPPORTED_TOKENS, INTENT_ACTIONS, type Token } from '../lib/tokens';
+import { SUPPORTED_TOKENS, type Token } from '../lib/tokens';
 import { TokenIcon } from './icons/CryptoIcons';
 
 interface IntentFormProps {
@@ -25,8 +25,8 @@ export default function IntentForm({ session, onSubmit, loading }: IntentFormPro
     e.preventDefault();
     if (!amount) return;
 
-    // For swap, recipient is self (or pool), but we need to pass something
-    const finalRecipient = action === 'swap' ? session.address : recipient;
+    // For swap, deposit, withdraw - recipient is self or the protocol
+    const finalRecipient = ['swap', 'deposit', 'withdraw'].includes(action) ? session.address : recipient;
     if (!finalRecipient) return;
 
     const intent = {
@@ -37,7 +37,7 @@ export default function IntentForm({ session, onSubmit, loading }: IntentFormPro
       amount,
       recipient: finalRecipient,
       chainId: token.chainId,
-      // Add swap details if needed
+      // Add action-specific details
       data: action === 'swap' ? { toToken: toToken.symbol } : undefined,
     };
 
@@ -47,20 +47,20 @@ export default function IntentForm({ session, onSubmit, loading }: IntentFormPro
     setRecipient('');
   };
 
-  const isValid = amount && (action === 'swap' || recipient);
+  const isValid = amount && (['swap', 'deposit', 'withdraw'].includes(action) || recipient);
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Action Selector */}
       <div>
         <label className="text-xs font-medium text-sui-steel mb-2 block">ACTION</label>
-        <div className="grid grid-cols-2 gap-2 bg-white/5 p-1 rounded-xl">
-          {['transfer', 'swap'].map((a) => (
+        <div className="grid grid-cols-4 gap-2 bg-white/5 p-1 rounded-xl">
+          {['transfer', 'swap', 'deposit', 'withdraw'].map((a) => (
             <button
               key={a}
               type="button"
               onClick={() => setAction(a)}
-              className={`py-2 rounded-lg text-sm font-medium transition-all ${
+              className={`py-2 rounded-lg text-xs font-medium transition-all ${
                 action === a ? 'bg-sui-sea text-white shadow-lg' : 'text-sui-steel hover:text-white'
               }`}
             >
@@ -218,7 +218,10 @@ export default function IntentForm({ session, onSubmit, loading }: IntentFormPro
         ) : (
           <>
             <Send size={20} />
-            {action === 'swap' ? 'Swap Tokens' : 'Send Transfer'}
+            {action === 'swap' && 'Swap Tokens'}
+            {action === 'transfer' && 'Send Transfer'}
+            {action === 'deposit' && 'Deposit to L2'}
+            {action === 'withdraw' && 'Withdraw to L1'}
           </>
         )}
       </button>

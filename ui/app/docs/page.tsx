@@ -2,7 +2,7 @@
 
 import Navbar from '../../components/Navbar';
 import Link from 'next/link';
-import { Book, FileText, Code, Terminal } from 'lucide-react';
+import { Book, Code, Terminal } from 'lucide-react';
 
 export default function Documentation() {
   return (

@@ -1,7 +1,7 @@
 'use client';
 
 import Navbar from '../../components/Navbar';
-import { Users, Globe, Target, Zap } from 'lucide-react';
+import { Globe, Target } from 'lucide-react';
 
 export default function About() {
   return (

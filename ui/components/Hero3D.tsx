@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function Hero3D() {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });

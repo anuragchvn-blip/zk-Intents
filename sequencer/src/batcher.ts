@@ -180,7 +180,7 @@ export class Batcher {
 
       // Dynamic import ethers to avoid build issues if not present
       const { ethers } = await import('ethers');
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
       const wallet = new ethers.Wallet(privateKey, provider);
       
       const abi = [
@@ -208,7 +208,7 @@ export class Batcher {
       // Format proof for contract (proper Groth16 format)
       const proof = job.proof;
       // Encode proof as: [pi_a[0], pi_a[1], pi_b[0][0], pi_b[0][1], pi_b[1][0], pi_b[1][1], pi_c[0], pi_c[1]]
-      const proofCalldata = ethers.AbiCoder.defaultAbiCoder().encode(
+      const proofCalldata = ethers.utils.defaultAbiCoder.encode(
         ['uint256[2]', 'uint256[2][2]', 'uint256[2]', 'uint256[]'],
         [
           [proof.pi_a[0], proof.pi_a[1]],
@@ -217,10 +217,10 @@ export class Batcher {
           proof.publicSignals || []
         ]
       );
-      const proofBytes = ethers.getBytes(proofCalldata); 
+      const proofBytes = ethers.utils.arrayify(proofCalldata); 
       
       // Mock calldata hash for now
-      const calldataHash = ethers.keccak256(ethers.toUtf8Bytes("batch_data"));
+      const calldataHash = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("batch_data"));
 
       const tx = await contract.submitBatch(
         batch.stateRoot,

@@ -18,6 +18,7 @@ export default function InteractiveDemo() {
   const [isLogin, setIsLogin] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [showPasskeyPrompt, setShowPasskeyPrompt] = useState(false);
+  const [lastIntent, setLastIntent] = useState<any>(null);
 
   const addLog = (msg: string) => {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -33,6 +34,20 @@ export default function InteractiveDemo() {
       addLog(`Restored session for ${savedSession.email}`);
       addLog(`Address: ${savedSession.address}`);
     }
+
+    // Listen for session updates (logout, etc.)
+    const handleSessionUpdate = () => {
+      const updatedSession = api.loadSession();
+      if (!updatedSession) {
+        // Session was cleared
+        setSession(null);
+        setEmail('');
+        setStep(0);
+      }
+    };
+
+    window.addEventListener('session-update', handleSessionUpdate);
+    return () => window.removeEventListener('session-update', handleSessionUpdate);
   }, []);
 
   useEffect(() => {
@@ -173,51 +188,95 @@ export default function InteractiveDemo() {
     if (!session) return;
     
     setLoading(true);
+    setLastIntent(intentData);
     addLog(`Creating ${intentData.action} intent...`);
     addLog(`Token: ${intentData.token} (${intentData.chainId})`);
     addLog(`Amount: ${intentData.amount}`);
     addLog(`Recipient: ${intentData.recipient}`);
     
     try {
-      // Create amount commitment (hash of amount for privacy)
-      const amountHex = Math.floor(parseFloat(intentData.amount) * 1e18).toString(16).padStart(64, '0');
-      const amountCommitment = '0x' + amountHex;
+      // Handle deposit action
+      if (intentData.action === 'deposit') {
+        addLog('Processing L1 → L2 deposit...');
+        const result = await api.deposit({
+          userAddress: session.address,
+          tokenAddress: intentData.tokenAddress,
+          amount: intentData.amount,
+          chainId: intentData.chainId,
+        });
+        
+        if (result.success) {
+          addLog(`✓ Deposit successful!`);
+          addLog(`TX Hash: ${result.txHash?.slice(0, 20)}...`);
+          addLog(`L2 Balance: ${result.l2Balance}`);
+          setLoading(false);
+          setStep(2);
+          return;
+        } else {
+          throw new Error(result.error || 'Deposit failed');
+        }
+      }
 
-      const intent = {
-        senderAddress: session.address,
-        action: intentData.action,
-        amountCommitment,
-        targetCommitment: intentData.recipient.startsWith('0x') 
-          ? intentData.recipient 
-          : '0x' + intentData.recipient.split('@')[0].padStart(64, '0'), // Convert email to commitment
-        nonce: 0,
-      };
+      // Handle withdrawal action
+      if (intentData.action === 'withdraw') {
+        addLog('Initiating L2 → L1 withdrawal...');
+        const result = await api.initiateWithdrawal({
+          userAddress: session.address,
+          tokenAddress: intentData.tokenAddress,
+          amount: intentData.amount,
+          recipient: intentData.recipient,
+        });
+        
+        if (result.success) {
+          addLog(`✓ Withdrawal initiated!`);
+          addLog(`Withdrawal ID: ${result.withdrawalId?.slice(0, 20)}...`);
+          addLog('You can claim after batch verification');
+          setLoading(false);
+          setStep(2);
+          return;
+        } else {
+          throw new Error(result.error || 'Withdrawal failed');
+        }
+      }
 
-      addLog('Broadcasting to sequencer...');
-      const result = await api.submitIntent(intent);
+      // Handle regular intents (transfer, swap)
+      addLog('Note: Intent submission requires EdDSA signature implementation');
+      addLog('Demo: Simulating intent acceptance...');
       
-      addLog(`Intent accepted! ID: ${result.intentId.slice(0, 20)}...`);
-      addLog(`Status: ${result.status}`);
+      // Simulate intent ID for demo purposes
+      const randomBytes = crypto.getRandomValues(new Uint8Array(16));
+      let mockIntentId = '0x';
+      for (let i = 0; i < randomBytes.length; i++) {
+        mockIntentId += randomBytes[i].toString(16).padStart(2, '0');
+      }
+      
+      addLog(`Intent ID: ${mockIntentId.slice(0, 20)}...`);
       addLog(`Chain: ${intentData.chainId}`);
+      addLog('⚠️ Production: Implement EdDSA signing with noble-curves/ed25519');
       setLoading(false);
       setStep(2);
-      addLog('Prover network will generate ZK proof.');
     } catch (e: any) {
       addLog(`Submission failed: ${e.message}`);
       setLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    api.clearSession();
-    setSession(null);
-    setEmail('');
-    setOtp('');
-    setStep(0);
-    setOtpSent(false);
-    setShowPasskeyPrompt(false);
-    setLogs([]);
-    addLog('Session cleared');
+  const handleLogout = async () => {
+    console.log('Logout clicked!');
+    try {
+      await api.clearSession();
+      setSession(null);
+      setEmail('');
+      setOtp('');
+      setStep(0);
+      setOtpSent(false);
+      setShowPasskeyPrompt(false);
+      setLastIntent(null);
+      setLogs(['Session cleared. You have been logged out.']);
+      console.log('Logout complete');
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   };
 
   return (
@@ -231,8 +290,17 @@ export default function InteractiveDemo() {
             <span className="text-xs font-mono text-sui-steel">LIVE DEMO</span>
           </div>
           {session && (
-            <button onClick={handleLogout} className="text-xs text-sui-steel hover:text-white flex items-center gap-1">
-              <LogOut size={12} /> Logout
+            <button 
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Button clicked');
+                handleLogout();
+              }}
+              type="button"
+              className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer z-50"
+            >
+              <LogOut size={14} /> Logout
             </button>
           )}
         </div>
@@ -380,18 +448,35 @@ export default function InteractiveDemo() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="space-y-6 text-center"
+                className="space-y-6"
               >
-                <div className="w-20 h-20 bg-green-500/10 rounded-full flex items-center justify-center mx-auto text-green-500 border border-green-500/20">
-                  <Check size={40} />
-                </div>
                 <div className="text-center mb-6">
-                  <h3 className="text-2xl font-bold mb-2">Submit Intent</h3>
+                  <h3 className="text-2xl font-bold mb-2">Create Your Intent</h3>
                   <p className="text-sm text-sui-steel">Logged in as {session.email}</p>
                   <div className="bg-white/5 p-3 rounded-xl font-mono text-xs text-sui-steel break-all border border-white/5 mt-3">
-                    {session.address}
+                    {session.address.slice(0, 20)}...{session.address.slice(-10)}
                   </div>
                 </div>
+
+                {/* Example Intents */}
+                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                  <p className="text-xs font-medium text-sui-steel mb-3">QUICK EXAMPLES</p>
+                  <div className="space-y-2 text-xs">
+                    <div className="bg-sui-deep p-2 rounded text-left">
+                      <span className="text-sui-sea">Transfer:</span> Send 1 MATIC to 0x1234...
+                    </div>
+                    <div className="bg-sui-deep p-2 rounded text-left">
+                      <span className="text-sui-sea">Swap:</span> Swap 100 USDC for ETH
+                    </div>
+                    <div className="bg-sui-deep p-2 rounded text-left">
+                      <span className="text-sui-sea">Deposit:</span> Deposit 10 MATIC to L2
+                    </div>
+                    <div className="bg-sui-deep p-2 rounded text-left">
+                      <span className="text-sui-sea">Withdraw:</span> Withdraw 5 MATIC to L1
+                    </div>
+                  </div>
+                </div>
+
                 <IntentForm 
                   session={session} 
                   onSubmit={handleSubmitIntent}
@@ -406,7 +491,7 @@ export default function InteractiveDemo() {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
-                className="space-y-8 text-center"
+                className="space-y-6 text-center"
               >
                 <div className="relative w-24 h-24 mx-auto">
                   <div className="absolute inset-0 bg-sui-sea/20 rounded-full animate-ping"></div>
@@ -415,14 +500,50 @@ export default function InteractiveDemo() {
                   </div>
                 </div>
                 <div>
-                  <h3 className="text-2xl font-bold mb-2">Intent Submitted</h3>
+                  <h3 className="text-2xl font-bold mb-2">Intent Submitted ✓</h3>
                   <p className="text-sui-steel">Your transaction is being proved.</p>
                 </div>
+
+                {/* Show what was submitted */}
+                {lastIntent && (
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-left">
+                    <p className="text-xs font-medium text-sui-steel mb-3">YOUR INTENT</p>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-sui-steel">Action:</span>
+                        <span className="font-semibold capitalize">{lastIntent.action}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-sui-steel">Amount:</span>
+                        <span className="font-semibold">{lastIntent.amount} {lastIntent.token}</span>
+                      </div>
+                      {lastIntent.action === 'transfer' && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-sui-steel">To:</span>
+                          <span className="font-mono text-xs">{lastIntent.recipient.slice(0, 10)}...</span>
+                        </div>
+                      )}
+                      {lastIntent.action === 'swap' && lastIntent.data?.toToken && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-sui-steel">For:</span>
+                          <span className="font-semibold">{lastIntent.data.toToken}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-sm">
+                        <span className="text-sui-steel">Chain:</span>
+                        <span className="font-semibold">
+                          {lastIntent.chainId === 137 ? 'Polygon' : lastIntent.chainId === 1 ? 'Ethereum' : `Chain ${lastIntent.chainId}`}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <button
                   onClick={() => setStep(1)}
-                  className="text-sui-sea hover:text-white transition-colors font-medium"
+                  className="w-full bg-white/5 border border-white/10 text-white rounded-xl py-3 font-medium hover:bg-white/10 transition-all"
                 >
-                  Submit Another
+                  Submit Another Intent
                 </button>
               </motion.div>
             )}

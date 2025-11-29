@@ -14,9 +14,8 @@ export class WalletService {
   async initialize() {
     try {
       // @ts-ignore - circomlibjs is optional
-      const { buildBabyjub } = await import('circomlibjs');
-      const babyJub = await buildBabyjub();
-      this.eddsa = babyJub;
+      const { buildEddsa } = await import('circomlibjs');
+      this.eddsa = await buildEddsa();
     } catch (error) {
       console.warn('circomlibjs not available, wallet signing disabled');
     }

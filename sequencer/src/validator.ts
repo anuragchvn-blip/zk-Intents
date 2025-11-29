@@ -98,13 +98,6 @@ export class IntentValidator {
       return isValid;
     } catch (error) {
       console.error('Signature verification error:', error);
-      // For development: accept placeholder signatures (all zeros)
-      const isPlaceholder = intent.signature.r === '0x' + '0'.repeat(64) && 
-                           intent.signature.s === '0x' + '0'.repeat(64);
-      if (isPlaceholder) {
-        console.warn('Accepting placeholder signature (development only)');
-        return true;
-      }
       return false;
     }
   }

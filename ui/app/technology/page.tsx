@@ -2,7 +2,7 @@
 
 import Navbar from '../../components/Navbar';
 import WorkflowDiagram from '../../components/WorkflowDiagram';
-import { Server, Cpu, Database, Shield, Lock, FileCode } from 'lucide-react';
+import { Shield, Lock, FileCode } from 'lucide-react';
 
 export default function Technology() {
   return (

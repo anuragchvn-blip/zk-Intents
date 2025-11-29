@@ -1,7 +1,7 @@
 'use client';
 
 import Navbar from '../../components/Navbar';
-import { Terminal, Book, Github, Code, Copy, Check, Box, Cpu } from 'lucide-react';
+import { Copy, Check, Box, Cpu } from 'lucide-react';
 import { useState } from 'react';
 
 export default function Developers() {

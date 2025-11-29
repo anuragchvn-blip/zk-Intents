@@ -1,6 +1,7 @@
 import prisma from './db';
 import { walletService } from './wallet';
 import { emailService } from './email-service';
+import { StateTree } from './state';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
 
@@ -16,6 +17,11 @@ export class AuthService {
   private readonly OTP_LENGTH = 6;
   private readonly OTP_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
   private readonly SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+  private stateTree?: StateTree;
+
+  constructor(stateTree?: StateTree) {
+    this.stateTree = stateTree;
+  }
 
   async initialize() {
     await walletService.initialize();
@@ -127,6 +133,16 @@ export class AuthService {
         nonce: 0,
       },
     });
+
+    // Add account to state tree
+    if (this.stateTree) {
+      await this.stateTree.updateAccount(keypair.address, {
+        address: keypair.address,
+        balanceCommitment: '0',
+        nonce: 0,
+        publicKey: JSON.stringify(keypair.publicKey),
+      });
+    }
 
     // Create session
     const sessionToken = randomBytes(32).toString('hex');
@@ -398,6 +414,40 @@ export class AuthService {
       address: account.address,
       sessionToken,
     };
+  }
+
+  /**
+   * Invalidate session (logout)
+   */
+  async invalidateSession(sessionToken: string): Promise<void> {
+    await prisma.session.deleteMany({
+      where: { sessionToken },
+    });
+  }
+
+  /**
+   * Get all passkeys for user email
+   */
+  async getPasskeysForUser(email: string): Promise<any[]> {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return [];
+    
+    return await prisma.passkeyCredential.findMany({
+      where: { userId: user.id },
+    });
+  }
+
+  /**
+   * Get account for user email
+   */
+  async getAccountForUser(email: string): Promise<any | null> {
+    const user = await prisma.user.findUnique({ 
+      where: { email },
+      include: { accounts: true }
+    });
+    
+    if (!user || user.accounts.length === 0) return null;
+    return user.accounts[0];
   }
 }
 

@@ -10,11 +10,12 @@ import { IntentValidator } from './validator';
 import { Batcher } from './batcher';
 import { StateTree } from './state';
 import { TransactionPool } from './pool';
-import { RecoveryService } from './recovery';
 import { DataAvailabilityService } from './data-availability';
 import { DecentralizedSequencerNetwork } from './decentralized-network';
 import { SolverNetwork, Solver } from './solver-network';
 import { AuthService } from './auth-service';
+import { DepositWithdrawalService } from './deposit-withdrawal';
+import prisma from './db';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const app = express();
@@ -31,7 +32,7 @@ const txPool = new TransactionPool();
 const validator = new IntentValidator(stateTree);
 const daService = new DataAvailabilityService();
 const solverNetwork = new SolverNetwork();
-const authService = new AuthService();
+const authService = new AuthService(stateTree);
 
 // Generate node ID and keys for sequencer
 const nodeId = process.env.NODE_ID || `seq-${Date.now()}`;
@@ -42,7 +43,14 @@ const sequencerNetwork = new DecentralizedSequencerNetwork(nodeId, nodeAddress, 
 const batcher = new Batcher(stateTree, txPool, daService, sequencerNetwork, (update: { type: string; data: any }) => {
   broadcastUpdate(update);
 });
-const recovery = new RecoveryService();
+
+// Initialize deposit/withdrawal service
+const depositWithdrawal = new DepositWithdrawalService(
+  stateTree,
+  process.env.POLYGON_RPC || 'https://rpc-mumbai.maticvigil.com',
+  process.env.SEQUENCER_PRIVATE_KEY || '0x0000000000000000000000000000000000000000000000000000000000000001',
+  process.env.ROLLUP_CONTRACT_ADDRESS || ''
+);
 
 // Initialize solver network with demo solvers
 function initializeSolvers() {
@@ -186,11 +194,10 @@ app.post('/api/v1/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Valid email required' });
     }
     
-    // Create user and send OTP
-    const userId = await authService.createUserAccount(email);
+    // Create OTP and send email
+    const otp = await authService.createEmailOTP(email);
     
     res.json({ 
-      userId,
       message: 'OTP sent to your email. Please verify to complete registration.' 
     });
   } catch (error) {
@@ -233,13 +240,19 @@ app.post('/api/v1/auth/verify', async (req, res) => {
  */
 app.post('/api/v1/auth/passkey/enroll', async (req, res) => {
   try {
-    const { credentialId, publicKey, userId } = req.body;
+    const { credentialId, publicKey, email } = req.body;
     
-    if (!credentialId || !publicKey || !userId) {
+    if (!credentialId || !publicKey || !email) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     
-    await recovery.enrollPasskey(userId, credentialId, publicKey);
+    // Look up user by email
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    await authService.enrollPasskey(user.id, credentialId, publicKey);
     
     res.json({ 
       success: true,
@@ -248,45 +261,6 @@ app.post('/api/v1/auth/passkey/enroll', async (req, res) => {
   } catch (error: any) {
     logger.error({ error: error.message }, 'Failed to enroll passkey');
     res.status(500).json({ error: error.message || 'Internal server error' });
-  }
-});
-
-/**
- * Legacy endpoint - Create session with email recovery
- */
-app.post('/api/v1/session/email', async (req, res) => {
-  try {
-    const { email } = req.body;
-    
-    // Send OTP
-    const sessionId = await recovery.createEmailSession(email);
-    
-    res.json({ sessionId, message: 'OTP sent to email' });
-  } catch (error) {
-    logger.error({ error }, 'Failed to create email session');
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-/**
- * Legacy endpoint - Verify email OTP
- */
-app.post('/api/v1/session/email/verify', async (req, res) => {
-  try {
-    const { sessionId, otp, encryptedKey } = req.body;
-    
-    const verified = await recovery.verifyEmailOTP(sessionId, otp);
-    if (!verified) {
-      return res.status(400).json({ error: 'Invalid OTP' });
-    }
-    
-    // Store encrypted key in database (handled by auth-service now)
-    logger.info({ sessionId }, 'Key backup stored');
-    
-    res.json({ success: true });
-  } catch (error) {
-    logger.error({ error }, 'Failed to verify OTP');
-    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -310,7 +284,11 @@ app.post('/api/v1/auth/login', async (req, res) => {
       message: 'OTP sent to your email'
     });
   } catch (error: any) {
-    logger.error({ error: error.message }, 'Failed to send login OTP');
+    logger.error({ error: error.message, stack: error.stack }, 'Failed to send login OTP');
+    // If user not found, return 404 instead of 500
+    if (error.message?.includes('not found') || error.message?.includes('Account not found')) {
+      return res.status(404).json({ error: error.message });
+    }
     res.status(500).json({ error: error.message || 'Internal server error' });
   }
 });
@@ -353,7 +331,7 @@ app.get('/api/v1/auth/passkey/challenge', async (req, res) => {
       return res.status(400).json({ error: 'Email required' });
     }
 
-    const passkeys = await recovery.getPasskeysForUser(email);
+    const passkeys = await authService.getPasskeysForUser(email);
     if (passkeys.length === 0) {
       return res.status(404).json({ error: 'No passkey found. Please login with password.' });
     }
@@ -400,25 +378,28 @@ app.post('/api/v1/auth/passkey/login', async (req, res) => {
   } catch (error: any) {
     logger.error({ error: error.message }, 'Passkey login failed');
     res.status(401).json({ error: error.message || 'Invalid passkey' });
-    // Let's import prisma in index.ts or add a method to recovery service.
-    
-    // Better: Add getAccountForUser to recovery service
-    const account = await recovery.getAccountForUser(email);
-    
-    if (!account) {
-       return res.status(404).json({ error: 'Account not found' });
+  }
+});
+
+/**
+ * Logout - invalidate session
+ */
+app.post('/api/v1/auth/logout', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'No session token provided' });
     }
 
-    const sessionId = require('crypto').randomBytes(32).toString('hex');
+    const sessionToken = authHeader.substring(7);
     
-    res.json({
-      success: true,
-      sessionId,
-      address: account.address,
-      credentialId: credential.id
-    });
+    // Delete session from database
+    await authService.invalidateSession(sessionToken);
+    
+    logger.info('User logged out');
+    res.json({ success: true, message: 'Logged out successfully' });
   } catch (error) {
-    logger.error({ error }, 'Failed to login');
+    logger.error({ error }, 'Logout failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -426,11 +407,21 @@ app.post('/api/v1/auth/passkey/login', async (req, res) => {
 /**
  * Enroll WebAuthn passkey
  */
-app.post('/api/v1/session/passkey/enroll', async (req, res) => {
+app.post('/api/v1/auth/passkey/enroll', async (req, res) => {
   try {
-    const { credentialId, publicKey, userId } = req.body;
+    const { credentialId, publicKey, email } = req.body;
     
-    await recovery.enrollPasskey(userId, credentialId, publicKey);
+    if (!email || !credentialId || !publicKey) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    // Look up user by email
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    await authService.enrollPasskey(user.id, credentialId, publicKey);
     
     res.json({ success: true });
   } catch (error) {
@@ -505,6 +496,128 @@ app.post('/api/v1/account/create', async (req, res) => {
   }
 });
 
+/**
+ * Deposit tokens from L1 to L2
+ */
+app.post('/api/v1/deposit', async (req, res) => {
+  try {
+    const { userAddress, tokenAddress, amount, chainId } = req.body;
+    
+    if (!userAddress || !tokenAddress || !amount) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    const result = await depositWithdrawal.processDeposit({
+      userAddress,
+      tokenAddress,
+      amount,
+      chainId: chainId || 137, // Default to Polygon Mumbai
+    });
+    
+    if (!result.success) {
+      return res.status(500).json({ error: result.error });
+    }
+    
+    logger.info({ userAddress, amount }, 'Deposit processed');
+    res.json({
+      success: true,
+      txHash: result.txHash,
+      l2Balance: result.l2Balance,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Deposit failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * Initiate withdrawal from L2 to L1
+ */
+app.post('/api/v1/withdraw/initiate', async (req, res) => {
+  try {
+    const { userAddress, tokenAddress, amount, recipient } = req.body;
+    
+    if (!userAddress || !tokenAddress || !amount || !recipient) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    const result = await depositWithdrawal.initiateWithdrawal({
+      userAddress,
+      tokenAddress,
+      amount,
+      recipient,
+      merkleProof: [], // Will be generated when withdrawal is included in batch
+    });
+    
+    if (!result.success) {
+      return res.status(500).json({ error: result.error });
+    }
+    
+    logger.info({ userAddress, amount, withdrawalId: result.withdrawalId }, 'Withdrawal initiated');
+    res.json({
+      success: true,
+      withdrawalId: result.withdrawalId,
+      message: 'Withdrawal initiated. You can claim it after the next batch is verified on L1.',
+    });
+  } catch (error) {
+    logger.error({ error }, 'Withdrawal initiation failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * Complete withdrawal on L1 (after proof verification)
+ */
+app.post('/api/v1/withdraw/complete', async (req, res) => {
+  try {
+    const { userAddress, tokenAddress, amount, recipient, merkleProof } = req.body;
+    
+    if (!userAddress || !tokenAddress || !amount || !recipient || !merkleProof) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+    
+    const result = await depositWithdrawal.completeWithdrawal({
+      userAddress,
+      tokenAddress,
+      amount,
+      recipient,
+      merkleProof,
+    });
+    
+    if (!result.success) {
+      return res.status(500).json({ error: result.error });
+    }
+    
+    logger.info({ userAddress, txHash: result.txHash }, 'Withdrawal completed');
+    res.json({
+      success: true,
+      txHash: result.txHash,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Withdrawal completion failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * Get L2 balance
+ */
+app.get('/api/v1/balance/:address', async (req, res) => {
+  try {
+    const { address } = req.params;
+    
+    const balance = await depositWithdrawal.getL2Balance(address);
+    
+    res.json({
+      address,
+      balance,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to get balance');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ===== WebSocket Handling =====
 
 wss.on('connection', (ws) => {
@@ -548,9 +661,15 @@ batcher.start(); // Start background batching process
 
 const PORT = process.env.PORT || 3000;
 
-server.listen(PORT, () => {
-  logger.info({ port: PORT }, '🚀 Sequencer API started');
-  logger.info({ stateRoot: stateTree.getRoot() }, 'Initial state root');
+// Initialize auth service before starting server
+authService.initialize().then(() => {
+  server.listen(PORT, () => {
+    logger.info({ port: PORT }, '🚀 Sequencer API started');
+    logger.info({ stateRoot: stateTree.getRoot() }, 'Initial state root');
+  });
+}).catch((error) => {
+  logger.error({ error }, 'Failed to initialize auth service');
+  process.exit(1);
 });
 
 // Graceful shutdown

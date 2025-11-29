@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import Navbar from '../components/Navbar';
 import Hero3D from '../components/Hero3D';
 import SpotlightCard from '../components/SpotlightCard';
@@ -8,54 +7,9 @@ import InteractiveDemo from '../components/InteractiveDemo';
 import IntentExplainer from '../components/IntentExplainer';
 import WorkflowDiagram from '../components/WorkflowDiagram';
 import { motion } from 'framer-motion';
-import { ArrowRight, Shield, Zap, Layers, Code, Globe, Terminal, Cpu, Network } from 'lucide-react';
-
-// Inline simplified client
-class SimpleClient {
-  constructor(private url: string) {}
-  async createSession() {
-    return {
-      address: '0x' + Math.random().toString(16).slice(2, 42),
-      publicKey: ['0x123', '0x456'] as [string, string],
-    };
-  }
-  async submitIntent() {
-    return { intentId: `intent_${Date.now()}`, status: 'queued' };
-  }
-}
+import { ArrowRight, Shield, Zap, Code, Terminal, Cpu, Network } from 'lucide-react';
 
 export default function Home() {
-  const [client] = useState(() => new SimpleClient('http://localhost:3000'));
-  const [session, setSession] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState('');
-  const [email, setEmail] = useState('');
-  
-  const createSession = async () => {
-    setLoading(true);
-    try {
-      const newSession = await client.createSession();
-      setSession(newSession);
-      setStatus(`Session active: ${newSession.address.slice(0, 8)}...`);
-    } catch (error: any) {
-      setStatus(`Error: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-  
-  const submitTransfer = async () => {
-    setLoading(true);
-    try {
-      const result = await client.submitIntent();
-      setStatus(`Intent submitted: ${result.intentId}`);
-    } catch (error: any) {
-      setStatus(`Error: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-  
   return (
     <main className="min-h-screen bg-sui-deep text-white font-sans selection:bg-sui-sea selection:text-white overflow-x-hidden">
       <Navbar />

@@ -1,5 +1,7 @@
 import pino from 'pino';
 import { ethers } from 'ethers';
+import { DexExecutor } from './dex-executor';
+import { LayerZeroBridge } from './layerzero-bridge';
 
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
@@ -46,6 +48,8 @@ export interface ExecutionResult {
  */
 export class Solver {
   private solverId: string;
+  private dexExecutor: DexExecutor;
+  private bridge: LayerZeroBridge;
   private pendingIntents: Map<string, Intent> = new Map();
   private executions: Map<string, ExecutionResult> = new Map();
   
@@ -56,6 +60,8 @@ export class Solver {
   ) {
     const wallet = new ethers.Wallet(privateKey);
     this.solverId = wallet.address;
+    this.dexExecutor = new DexExecutor(privateKey);
+    this.bridge = new LayerZeroBridge(privateKey);
     logger.info({ solverId: this.solverId, chains: supportedChains }, 'Solver initialized');
   }
   
@@ -129,7 +135,7 @@ export class Solver {
           result = await this.executeBridge(intent);
           break;
         case 'withdraw':
-          result = await this.executeWithdrawal(intent);
+          result = await this.executeWithdrawal();
           break;
         default:
           throw new Error(`Unsupported action: ${intent.action}`);
@@ -172,7 +178,7 @@ export class Solver {
    */
   private async executeTransfer(intent: Intent): Promise<ExecutionResult> {
     const rpcUrl = this.getRpcUrl(intent.sourceChain || 'polygon');
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
     const wallet = new ethers.Wallet(this.privateKey, provider);
     
     // Decode amount from commitment (in real system, use ZK proof)
@@ -180,7 +186,7 @@ export class Solver {
     
     // Send transaction
     const tx = await wallet.sendTransaction({
-      to: intent.targetCommitment || ethers.ZeroAddress,
+      to: intent.targetCommitment || ethers.constants.AddressZero,
       value: amount,
     });
     
@@ -190,8 +196,8 @@ export class Solver {
       intentId: intent.intentId,
       solverId: this.solverId,
       success: receipt?.status === 1,
-      txHash: receipt?.hash,
-      gasUsed: receipt?.gasUsed,
+      txHash: receipt?.transactionHash,
+      gasUsed: receipt?.gasUsed ? BigInt(receipt.gasUsed.toString()) : undefined,
       executionTime: 0, // Will be set by caller
     };
   }
@@ -200,20 +206,63 @@ export class Solver {
    * Execute swap intent (using DEX)
    */
   private async executeSwap(intent: Intent): Promise<ExecutionResult> {
-    // In real implementation: call Uniswap/1inch/CoW Protocol
-    logger.info({ intentId: intent.intentId }, 'Executing swap via DEX');
+    logger.info({ intentId: intent.intentId }, 'Executing swap via Uniswap V3');
     
-    // Placeholder: Simulate swap
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    return {
-      intentId: intent.intentId,
-      solverId: this.solverId,
-      success: true,
-      txHash: '0x' + Buffer.from(Math.random().toString()).toString('hex').slice(0, 64),
-      gasUsed: 150000n,
-      executionTime: 0,
+    try {
+      // Extract swap parameters from intent
+      const chainId = this.getChainId(intent.sourceChain || 'polygon');
+      const amountIn = ethers.utils.formatUnits(intent.amountCommitment, 18);
+      
+      // Execute real swap via Uniswap
+      const swapResult = await this.dexExecutor.executeSwap({
+        tokenIn: intent.token || ethers.constants.AddressZero,
+        tokenOut: intent.targetToken || ethers.constants.AddressZero,
+        amountIn,
+        recipient: intent.targetCommitment || this.solverId,
+        chainId,
+        slippageTolerance: 50, // 0.5%
+      });
+      
+      if (!swapResult.success) {
+        throw new Error(swapResult.error || 'Swap failed');
+      }
+      
+      return {
+        intentId: intent.intentId,
+        solverId: this.solverId,
+        success: true,
+        txHash: swapResult.txHash,
+        gasUsed: BigInt(swapResult.gasUsed || '0'),
+        executionTime: 0,
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ error: errorMessage, intentId: intent.intentId }, 'Swap execution failed');
+      
+      // Fallback to simulation if real execution fails
+      return {
+        intentId: intent.intentId,
+        solverId: this.solverId,
+        success: false,
+        error: errorMessage,
+        executionTime: 0,
+      };
+    }
+  }
+  
+  /**
+   * Get numeric chain ID from chain name
+   */
+  private getChainId(chainName: string): number {
+    const chainIds: Record<string, number> = {
+      'ethereum': 1,
+      'polygon': 137,
+      'arbitrum': 42161,
+      'optimism': 10,
+      'base': 8453,
     };
+    return chainIds[chainName.toLowerCase()] || 137;
   }
   
   /**
@@ -224,38 +273,53 @@ export class Solver {
       intentId: intent.intentId,
       from: intent.sourceChain,
       to: intent.targetChain
-    }, 'Executing cross-chain bridge');
+    }, 'Executing cross-chain bridge via LayerZero');
     
-    // In real implementation: use LayerZero, Axelar, or custom bridge
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    return {
-      intentId: intent.intentId,
-      solverId: this.solverId,
-      success: true,
-      txHash: '0x' + Buffer.from(Math.random().toString()).toString('hex').slice(0, 64),
-      gasUsed: 300000n,
-      executionTime: 0,
-    };
+    try {
+      const sourceChainId = this.getChainId(intent.sourceChain || 'polygon');
+      const destChainId = this.getChainId(intent.targetChain || 'ethereum');
+      const amountIn = ethers.utils.formatUnits(intent.amountCommitment, 18);
+      
+      // Execute real bridge via LayerZero
+      const bridgeResult = await this.bridge.bridgeTokens({
+        tokenAddress: intent.token || ethers.constants.AddressZero,
+        amount: amountIn,
+        recipient: intent.targetCommitment || this.solverId,
+        sourceChainId,
+        destChainId,
+        slippage: 50,
+      });
+      
+      if (!bridgeResult.success) {
+        throw new Error(bridgeResult.error || 'Bridge failed');
+      }
+      
+      return {
+        intentId: intent.intentId,
+        solverId: this.solverId,
+        success: true,
+        txHash: bridgeResult.txHash,
+        gasUsed: 300000n,
+        executionTime: 0,
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ error: errorMessage, intentId: intent.intentId }, 'Bridge execution failed');
+      
+      // Fallback to simulation
+      return {
+        intentId: intent.intentId,
+        solverId: this.solverId,
+        success: false,
+        error: errorMessage,
+        executionTime: 0,
+      };
+    }
   }
   
-  /**
-   * Execute withdrawal to L1
-   */
-  private async executeWithdrawal(intent: Intent): Promise<ExecutionResult> {
-    logger.info({ intentId: intent.intentId }, 'Executing withdrawal to L1');
-    
-    // Placeholder: Submit withdrawal to rollup contract
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    
-    return {
-      intentId: intent.intentId,
-      solverId: this.solverId,
-      success: true,
-      txHash: '0x' + Buffer.from(Math.random().toString()).toString('hex').slice(0, 64),
-      gasUsed: 200000n,
-      executionTime: 0,
-    };
+  private async executeWithdrawal(): Promise<ExecutionResult> {
+    throw new Error('Withdrawal execution not implemented - integrate with DepositWithdrawalService');
   }
   
   /**

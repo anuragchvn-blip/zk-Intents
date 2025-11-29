@@ -116,21 +116,11 @@ export class SessionManager {
   
   /**
    * Sign intent with session key
+   * NOTE: NOT IMPLEMENTED - requires proper EdDSA signature generation
+   * Random signatures will be rejected by validator
    */
-  signIntent(intent: any, session: SessionKey): any {
-    // TODO: Implement EdDSA signing
-    // For POC, placeholder signature
-    
-    const message = this.hashIntent(intent);
-    
-    return {
-      ...intent,
-      signature: {
-        r: randomBytes(32).toString('hex'),
-        s: randomBytes(32).toString('hex'),
-        pubKey: session.publicKey,
-      },
-    };
+  signIntent(intent: any, session: SessionKey): never {
+    throw new Error('EdDSA signing not implemented. Use proper cryptographic library (e.g., noble-curves/ed25519)');
   }
   
   // ===== Private Methods =====
