@@ -44,7 +44,7 @@ export const CONTRACT_ADDRESSES = {
 export const CURRENT_NETWORK = 'mumbai';
 
 export const SEQUENCER_URL = 
-  process.env.NEXT_PUBLIC_SEQUENCER_URL || 'http://localhost:3000';
+  process.env.NEXT_PUBLIC_SEQUENCER_URL || 'https://zk-intents.onrender.com';
 
 export const getNetworkConfig = () => NETWORK_CONFIG[CURRENT_NETWORK];
 export const getContractAddresses = () => CONTRACT_ADDRESSES[CURRENT_NETWORK];
