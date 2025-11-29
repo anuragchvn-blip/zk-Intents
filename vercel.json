@@ -1,0 +1,12 @@
+{
+  "buildCommand": "cd ui && npm install && npm run build",
+  "outputDirectory": "ui/.next",
+  "framework": "nextjs",
+  "installCommand": "cd ui && npm install",
+  "devCommand": "cd ui && npm run dev",
+  "env": {
+    "NEXT_PUBLIC_SEQUENCER_URL": "https://zk-intents-sequencer.vercel.app",
+    "NEXT_PUBLIC_NETWORK": "mumbai",
+    "NEXT_PUBLIC_CHAIN_ID": "80001"
+  }
+}
