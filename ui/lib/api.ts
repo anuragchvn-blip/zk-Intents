@@ -93,11 +93,14 @@ export class ZkClient {
         .replace(/=/g, '');
 
       // Step 2: Create passkey using WebAuthn
+      // Get current domain for RP ID (remove port if present)
+      const rpId = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+      
       const credential = await startRegistration({
         challenge: challengeB64,
         rp: {
           name: 'zk-Intents',
-          id: 'localhost',
+          id: rpId,
         },
         user: {
           id: email,
@@ -214,9 +217,12 @@ export class ZkClient {
       const { challenge, allowCredentials } = await res.json();
 
       // Step 2: Authenticate with WebAuthn
+      // Get current domain for RP ID (remove port if present)
+      const rpId = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+      
       const credential = await startAuthentication({
         challenge,
-        rpId: 'localhost',
+        rpId: rpId,
         allowCredentials,
         userVerification: 'preferred',
       });
