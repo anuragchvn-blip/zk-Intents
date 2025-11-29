@@ -4,7 +4,10 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title ZkIntentsRollup
@@ -15,8 +18,11 @@ contract ZkIntentsRollup is
     Initializable, 
     UUPSUpgradeable, 
     OwnableUpgradeable, 
-    ReentrancyGuard 
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable
 {
+    using SafeERC20 for IERC20;
+    
     // ===== State Variables =====
     
     /// @notice Current state root of the L2 state tree
@@ -40,14 +46,29 @@ contract ZkIntentsRollup is
     /// @notice Emergency withdrawal enabled after this timestamp if sequencer is down
     uint256 public constant EMERGENCY_DELAY = 24 hours;
     
+    /// @notice Challenge period for fraud proofs
+    uint256 public constant CHALLENGE_PERIOD = 7 days;
+    
     /// @notice Last batch timestamp
     uint256 public lastBatchTimestamp;
+    
+    /// @notice Fraud proof bond amount
+    uint256 public constant FRAUD_PROOF_BOND = 1 ether;
     
     /// @notice Minimum batch interval (prevents DOS)
     uint256 public constant MIN_BATCH_INTERVAL = 10 seconds;
     
     /// @notice Maximum pending deposits before sequencer must process
     uint256 public constant MAX_PENDING_DEPOSITS = 1000;
+    
+    /// @notice Supported ERC20 tokens
+    mapping(address => bool) public supportedTokens;
+    
+    /// @notice Token balances held in contract
+    mapping(address => uint256) public tokenBalances;
+    
+    /// @notice Fraud proof counter
+    uint256 public fraudProofCounter;
     
     // ===== Structs =====
     
@@ -61,6 +82,7 @@ contract ZkIntentsRollup is
     
     struct Deposit {
         address depositor;
+        address token; // address(0) for ETH
         uint256 amount;
         bytes32 l2Address; // Commitment to L2 address
         uint256 timestamp;
@@ -69,10 +91,19 @@ contract ZkIntentsRollup is
     
     struct Withdrawal {
         address recipient;
+        address token; // address(0) for ETH
         uint256 amount;
         bytes32 stateRoot;
         uint256 timestamp;
         bool finalized;
+    }
+    
+    struct FraudProof {
+        uint256 batchId;
+        address challenger;
+        bytes proofData;
+        uint256 timestamp;
+        bool resolved;
     }
     
     // ===== Mappings =====
@@ -81,6 +112,7 @@ contract ZkIntentsRollup is
     mapping(uint256 => Deposit) public deposits;
     mapping(uint256 => Withdrawal) public withdrawals;
     mapping(bytes32 => bool) public processedWithdrawals;
+    mapping(uint256 => FraudProof) public fraudProofs;
     
     // ===== Events =====
     
@@ -112,6 +144,11 @@ contract ZkIntentsRollup is
     
     event SequencerUpdated(address indexed oldSequencer, address indexed newSequencer);
     event VerifierUpdated(address indexed oldVerifier, address indexed newVerifier);
+    event TokenAdded(address indexed token);
+    event TokenRemoved(address indexed token);
+    event FraudProofSubmitted(uint256 indexed fraudProofId, uint256 indexed batchId, address indexed challenger);
+    event FraudProofResolved(uint256 indexed fraudProofId, bool valid);
+    event EmergencyWithdrawal(address indexed user, address indexed token, uint256 amount);
     
     // ===== Modifiers =====
     
@@ -140,6 +177,8 @@ contract ZkIntentsRollup is
     ) public initializer {
         __Ownable_init(msg.sender);
         __UUPSUpgradeable_init();
+        __ReentrancyGuard_init();
+        __Pausable_init();
         
         stateRoot = _stateRoot;
         verifier = _verifier;
@@ -161,7 +200,7 @@ contract ZkIntentsRollup is
         bytes32 _calldataHash,
         uint256 _txCount,
         bytes calldata _proof
-    ) external onlySequencer {
+    ) external onlySequencer whenNotPaused {
         require(
             block.timestamp >= lastBatchTimestamp + MIN_BATCH_INTERVAL,
             "ZkIntentsRollup: batch interval too short"
@@ -220,26 +259,54 @@ contract ZkIntentsRollup is
     // ===== Deposit Functions =====
     
     /**
-     * @notice Deposit funds to L2
+     * @notice Deposit ETH to L2
      * @param _l2Address Commitment to L2 receiving address
      */
-    function deposit(bytes32 _l2Address) external payable {
-        require(msg.value > 0, "ZkIntentsRollup: deposit amount must be greater than 0");
-        require(
-            depositCounter < MAX_PENDING_DEPOSITS,
-            "ZkIntentsRollup: too many pending deposits"
-        );
+    function deposit(bytes32 _l2Address) external payable whenNotPaused {
+        require(msg.value > 0, "Amount must be > 0");
+        require(depositCounter < MAX_PENDING_DEPOSITS, "Too many pending deposits");
         
         depositCounter++;
         deposits[depositCounter] = Deposit({
             depositor: msg.sender,
+            token: address(0),
             amount: msg.value,
             l2Address: _l2Address,
             timestamp: block.timestamp,
             processed: false
         });
         
+        tokenBalances[address(0)] += msg.value;
         emit DepositQueued(depositCounter, msg.sender, msg.value, _l2Address);
+    }
+    
+    /**
+     * @notice Deposit ERC20 tokens to L2
+     * @param _token Token address
+     * @param _amount Amount to deposit
+     * @param _l2Address Commitment to L2 receiving address
+     */
+    function depositToken(
+        address _token,
+        uint256 _amount,
+        bytes32 _l2Address
+    ) external whenNotPaused {
+        require(supportedTokens[_token], "Token not supported");
+        require(_amount > 0, "Amount must be > 0");
+        
+        depositCounter++;
+        deposits[depositCounter] = Deposit({
+            depositor: msg.sender,
+            token: _token,
+            amount: _amount,
+            l2Address: _l2Address,
+            timestamp: block.timestamp,
+            processed: false
+        });
+        
+        IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
+        tokenBalances[_token] += _amount;
+        emit DepositQueued(depositCounter, msg.sender, _amount, _l2Address);
     }
     
     /**
@@ -260,29 +327,26 @@ contract ZkIntentsRollup is
     
     /**
      * @notice Request withdrawal from L2
+     * @param _token Token address (address(0) for ETH)
      * @param _amount Amount to withdraw
      * @param _merkleProof Merkle proof of account state
      */
     function requestWithdrawal(
+        address _token,
         uint256 _amount,
         bytes32[] calldata _merkleProof
-    ) external {
+    ) external whenNotPaused {
         // Verify Merkle proof against current state root
-        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, _amount));
-        require(
-            _verifyMerkleProof(leaf, _merkleProof, stateRoot),
-            "ZkIntentsRollup: invalid Merkle proof"
-        );
+        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, _token, _amount));
+        require(_verifyMerkleProof(leaf, _merkleProof, stateRoot), "Invalid proof");
         
-        bytes32 withdrawalHash = keccak256(abi.encodePacked(msg.sender, _amount, stateRoot));
-        require(
-            !processedWithdrawals[withdrawalHash],
-            "ZkIntentsRollup: withdrawal already processed"
-        );
+        bytes32 withdrawalHash = keccak256(abi.encodePacked(msg.sender, _token, _amount, stateRoot));
+        require(!processedWithdrawals[withdrawalHash], "Already processed");
         
         withdrawalCounter++;
         withdrawals[withdrawalCounter] = Withdrawal({
             recipient: msg.sender,
+            token: _token,
             amount: _amount,
             stateRoot: stateRoot,
             timestamp: block.timestamp,
@@ -290,7 +354,6 @@ contract ZkIntentsRollup is
         });
         
         processedWithdrawals[withdrawalHash] = true;
-        
         emit WithdrawalRequested(withdrawalCounter, msg.sender, _amount);
     }
     
@@ -309,10 +372,15 @@ contract ZkIntentsRollup is
         );
         
         withdrawal.finalized = true;
+        tokenBalances[withdrawal.token] -= withdrawal.amount;
         
         // Transfer funds
-        (bool success, ) = withdrawal.recipient.call{value: withdrawal.amount}("");
-        require(success, "ZkIntentsRollup: transfer failed");
+        if (withdrawal.token == address(0)) {
+            (bool success, ) = withdrawal.recipient.call{value: withdrawal.amount}("");
+            require(success, "Transfer failed");
+        } else {
+            IERC20(withdrawal.token).safeTransfer(withdrawal.recipient, withdrawal.amount);
+        }
         
         emit WithdrawalFinalized(_withdrawalId, withdrawal.recipient, withdrawal.amount);
     }
@@ -340,7 +408,86 @@ contract ZkIntentsRollup is
         return computedHash == _root;
     }
     
+    // ===== Fraud Proof Functions =====
+    
+    /**
+     * @notice Submit fraud proof challenging a batch
+     * @param _batchId Batch to challenge
+     * @param _proofData Fraud proof data
+     */
+    function submitFraudProof(
+        uint256 _batchId,
+        bytes calldata _proofData
+    ) external payable {
+        require(msg.value == FRAUD_PROOF_BOND, "Invalid bond");
+        require(batches[_batchId].timestamp > 0, "Batch does not exist");
+        require(
+            block.timestamp < batches[_batchId].timestamp + CHALLENGE_PERIOD,
+            "Challenge period expired"
+        );
+        
+        fraudProofCounter++;
+        fraudProofs[fraudProofCounter] = FraudProof({
+            batchId: _batchId,
+            challenger: msg.sender,
+            proofData: _proofData,
+            timestamp: block.timestamp,
+            resolved: false
+        });
+        
+        emit FraudProofSubmitted(fraudProofCounter, _batchId, msg.sender);
+    }
+    
+    /**
+     * @notice Emergency withdrawal if sequencer is inactive
+     * @param _token Token address
+     * @param _amount Amount to withdraw
+     * @param _merkleProof Merkle proof
+     */
+    function emergencyWithdraw(
+        address _token,
+        uint256 _amount,
+        bytes32[] calldata _merkleProof
+    ) external nonReentrant {
+        require(
+            block.timestamp > lastBatchTimestamp + EMERGENCY_DELAY,
+            "Sequencer still active"
+        );
+        
+        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, _token, _amount));
+        require(_verifyMerkleProof(leaf, _merkleProof, stateRoot), "Invalid proof");
+        
+        tokenBalances[_token] -= _amount;
+        
+        if (_token == address(0)) {
+            (bool success, ) = msg.sender.call{value: _amount}("");
+            require(success, "Transfer failed");
+        } else {
+            IERC20(_token).safeTransfer(msg.sender, _amount);
+        }
+        
+        emit EmergencyWithdrawal(msg.sender, _token, _amount);
+    }
+    
     // ===== Admin Functions =====
+    
+    function addSupportedToken(address _token) external onlyOwner {
+        supportedTokens[_token] = true;
+        emit TokenAdded(_token);
+    }
+    
+    function removeSupportedToken(address _token) external onlyOwner {
+        supportedTokens[_token] = false;
+        emit TokenRemoved(_token);
+    }
+    
+    function pause() external onlyOwner {
+        _pause();
+    }
+    
+    function unpause() external onlyOwner {
+        _unpause();
+    }
     
     function setSequencer(address _newSequencer) external onlyOwner {
         address oldSequencer = sequencer;
