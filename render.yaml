@@ -1,0 +1,43 @@
+version: 1
+services:
+  - type: web
+    name: zk-intents-sequencer
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: cd sequencer; npm install; npm run build
+    startCommand: cd sequencer; npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: DATABASE_URL
+        sync: false
+      - key: ROLLUP_CONTRACT_ADDRESS
+        value: 0xE6a142952E876F2Aa30E1c51E4e5b1675CC4bFB3
+      - key: VERIFIER_CONTRACT_ADDRESS
+        value: 0x3fb8D15312A7f2bfC1B22578213DDa4957C2f952
+      - key: PAIRING_CONTRACT_ADDRESS
+        value: 0xBC7a47391847c84D57A792fBcDA6d2BF399513b0
+      - key: POLYGON_RPC
+        value: https://rpc-mumbai.maticvigil.com
+      - key: NETWORK
+        value: mumbai
+      - key: CHAIN_ID
+        value: 80001
+      - key: SEQUENCER_PRIVATE_KEY
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+    healthCheckPath: /health
